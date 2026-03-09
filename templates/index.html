@@ -5,6 +5,54 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dataset Manager</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        /* ── Auto-detect badges ─────────────────────────────────────── */
+        .auto-badges {
+            display: flex; flex-wrap: wrap; gap: 3px;
+            padding: 4px 6px;
+        }
+        .auto-badge {
+            font-size: 10px; padding: 1px 5px; border-radius: 3px;
+            font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+        }
+        .auto-badge.mod-rgb      { background: #1e88e5; color: #fff; }
+        .auto-badge.mod-thermal  { background: #e65100; color: #fff; }
+        .auto-badge.cls-airplane { background: #7e57c2; color: #fff; }
+        .auto-badge.cls-bird     { background: #26a69a; color: #fff; }
+        .auto-badge.cls-drone    { background: #ef5350; color: #fff; }
+        .auto-badge.cls-helicopter { background: #ffa726; color: #000; }
+        .auto-badge.cls-unknown  { background: #757575; color: #fff; }
+        .auto-badge.res-small    { background: #546e7a; color: #fff; }
+        .auto-badge.res-large    { background: #00897b; color: #fff; }
+        .auto-badge.obj-small    { background: #8d6e63; color: #fff; }
+        .auto-badge.obj-large    { background: #5c6bc0; color: #fff; }
+        .auto-badge.unknown      { background: #bdbdbd; color: #333; }
+
+        /* ── Quick Select button ────────────────────────────────────── */
+        .quick-select {
+            background: #2e7d32; color: #fff; border: none;
+            padding: 6px 14px; border-radius: 6px; cursor: pointer;
+            font-size: 13px; font-weight: 600;
+            transition: background 0.15s;
+        }
+        .quick-select:hover { background: #388e3c; }
+        .quick-select:disabled { background: #555; cursor: not-allowed; opacity: 0.5; }
+
+        /* ── Auto-fill indicator in label selector ──────────────────── */
+        .opt-btn.auto-filled {
+            border: 2px solid #66bb6a;
+            box-shadow: 0 0 0 1px #66bb6a33;
+        }
+        .auto-hint {
+            font-size: 10px; color: #66bb6a; margin-left: 4px;
+            font-style: italic;
+        }
+
+        /* ── Image info area adjustments ────────────────────────────── */
+        .image-info {
+            display: flex; flex-direction: column; gap: 2px;
+        }
+    </style>
 </head>
 <body>
 
@@ -53,7 +101,7 @@
     <div class="tabs">
         <button class="tab-btn active" onclick="switchFolder('train')">Train</button>
         <button class="tab-btn" onclick="switchFolder('test')">Test</button>
-        <button class="tab-btn" onclick="switchFolder('valid')">Valid</button>
+        <button class="tab-btn" onclick="switchFolder('val')">Val</button>
         <button class="tab-btn" onclick="switchFolder('selected')">Selected</button>
         <span class="tab-count" id="folderCount"></span>
     </div>
@@ -68,6 +116,7 @@
     <div class="modal-info">
         <span id="modalFolderName"></span> / <span id="modalFileName"></span>
         <span id="modalMetadata"></span>
+        <span id="modalAutoInfo" style="margin-left:8px;"></span>
     </div>
     <div class="modal-content-wrapper">
         <img id="modalImage" class="modal-content" src="" alt="Viewer">
@@ -76,6 +125,7 @@
     <div class="modal-controls">
         <button class="nav-btn" onclick="prevImage()">&#8592;</button>
         <button class="danger"  onclick="deleteCurrentImage()">Delete&nbsp;<kbd>Del</kbd></button>
+        <button class="quick-select" id="quickSelectBtn" onclick="quickSelect()">⚡ Quick Select&nbsp;<kbd>S</kbd></button>
         <button class="success" onclick="openLabelSelector()">Select&nbsp;<kbd>Enter</kbd></button>
         <button class="nav-btn" onclick="nextImage()">&#8594;</button>
     </div>
@@ -90,7 +140,7 @@
         <div class="label-groups">
             <!-- Modality -->
             <div class="label-group">
-                <div class="label-group-title">Modality</div>
+                <div class="label-group-title">Modality <span class="auto-hint" id="hintModality"></span></div>
                 <div class="label-options" id="optModality">
                     <button class="opt-btn" data-group="modality" data-value="rgb">RGB</button>
                     <button class="opt-btn" data-group="modality" data-value="thermal">Thermal</button>
@@ -98,7 +148,7 @@
             </div>
             <!-- Resolution -->
             <div class="label-group">
-                <div class="label-group-title">Resolution</div>
+                <div class="label-group-title">Resolution <span class="auto-hint" id="hintResolution"></span></div>
                 <div class="label-options" id="optResolution">
                     <button class="opt-btn" data-group="resolution" data-value="small">Small</button>
                     <button class="opt-btn" data-group="resolution" data-value="large">Large</button>
@@ -106,7 +156,7 @@
             </div>
             <!-- Object Size -->
             <div class="label-group">
-                <div class="label-group-title">Object Size</div>
+                <div class="label-group-title">Object Size <span class="auto-hint" id="hintObjSize"></span></div>
                 <div class="label-options" id="optObjSize">
                     <button class="opt-btn" data-group="obj_size" data-value="small">Small</button>
                     <button class="opt-btn" data-group="obj_size" data-value="large">Large</button>
@@ -114,7 +164,7 @@
             </div>
             <!-- Class -->
             <div class="label-group">
-                <div class="label-group-title">Class</div>
+                <div class="label-group-title">Class <span class="auto-hint" id="hintClass"></span></div>
                 <div class="label-options" id="optClass">
                     <button class="opt-btn" data-group="class" data-value="airplane">Airplane</button>
                     <button class="opt-btn" data-group="class" data-value="bird">Bird</button>
@@ -244,6 +294,31 @@ async function loadImages() {
     } catch(e) { console.error('Gallery error', e); }
 }
 
+function buildBadges(img) {
+    // For selected images, use the label
+    if (img.label) {
+        const l = img.label;
+        return `<div class="auto-badges">
+            <span class="auto-badge mod-${l.modality}">${l.modality}</span>
+            <span class="auto-badge cls-${l.class}">${l.class}</span>
+        </div>`;
+    }
+    // For dataset images, use auto-detected values
+    if (img.auto) {
+        const a = img.auto;
+        let html = '<div class="auto-badges">';
+        html += `<span class="auto-badge mod-${a.modality}">${a.modality}</span>`;
+        html += `<span class="auto-badge cls-${a.class}">${a.class}</span>`;
+        if (a.resolution && a.resolution !== 'unknown')
+            html += `<span class="auto-badge res-${a.resolution}">${a.resolution}res</span>`;
+        if (a.obj_size && a.obj_size !== 'unknown')
+            html += `<span class="auto-badge obj-${a.obj_size}">${a.obj_size}obj</span>`;
+        html += '</div>';
+        return html;
+    }
+    return '';
+}
+
 function renderGallery() {
     const gallery = document.getElementById('gallery');
     if (images.length === 0) {
@@ -256,21 +331,17 @@ function renderGallery() {
         card.className = 'image-card';
         card.onclick   = () => openModal(index);
 
-        // Build label badge for selected images
-        let badge = '';
-        if (img.label) {
-            const l = img.label;
-            badge = `<div class="label-badge">
-                <span class="lbl-mod ${l.modality}">${l.modality}</span>
-                <span class="lbl-cls">${l.class}</span>
-            </div>`;
-        }
+        const badges = buildBadges(img);
+        const dimInfo = img.dimensions
+            ? `<div style="font-size:10px;color:#888;">${img.dimensions.width}×${img.dimensions.height}${img.bbox_area != null ? ' · obj ' + img.bbox_area + '%' : ''}</div>`
+            : '';
 
         card.innerHTML = `
             <img src="/image/${img.path}" loading="lazy" alt="${img.name}">
-            ${badge}
+            ${badges}
             <div class="image-info">
                 <div class="image-name" title="${img.name}">${img.name}</div>
+                ${dimInfo}
             </div>`;
         gallery.appendChild(card);
     });
@@ -296,9 +367,31 @@ async function openModal(index) {
     const canvas      = document.getElementById('labelCanvas');
     const ctx         = canvas.getContext('2d');
     const metaSpan    = document.getElementById('modalMetadata');
+    const autoSpan    = document.getElementById('modalAutoInfo');
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     metaSpan.textContent = '';
+
+    // Show auto-detected info in modal header
+    if (img.auto) {
+        const a = img.auto;
+        let parts = [`📂 ${a.modality}/${a.class}`];
+        if (a.resolution !== 'unknown') parts.push(`📐 ${a.resolution}res`);
+        if (a.obj_size !== 'unknown') parts.push(`📦 ${a.obj_size}obj`);
+        if (img.bbox_area != null) parts.push(`(${img.bbox_area}%)`);
+        autoSpan.textContent = parts.join(' · ');
+    } else {
+        autoSpan.textContent = '';
+    }
+
+    // Update quick-select button state
+    const qBtn = document.getElementById('quickSelectBtn');
+    const canQuick = img.auto &&
+        img.auto.modality !== 'unknown' && MODALITIES_SET.has(img.auto.modality) &&
+        img.auto.class !== 'unknown' && CLASSES_SET.has(img.auto.class) &&
+        img.auto.resolution !== 'unknown' &&
+        img.auto.obj_size !== 'unknown';
+    qBtn.disabled = !canQuick;
 
     modalImg.src = `/image/${img.path}`;
     document.getElementById('modalFolderName').textContent = img.folder;
@@ -323,20 +416,37 @@ async function openModal(index) {
     };
 }
 
+// Taxonomy sets for validation
+const MODALITIES_SET = new Set(['rgb', 'thermal']);
+const CLASSES_SET    = new Set(['airplane', 'bird', 'drone', 'helicopter']);
+
 function drawLabels(ctx, labels, W, H) {
     ctx.lineWidth = 2;
     ctx.font = '14px Arial';
+    const classNames = ['airplane', 'bird', 'drone', 'helicopter'];
+    const classColors = ['#7e57c2', '#26a69a', '#ef5350', '#ffa726'];
     labels.forEach(l => {
         const x = (l.x - l.w/2)*W, y = (l.y - l.h/2)*H;
         const w = l.w*W,           h = l.h*H;
-        ctx.strokeStyle = '#00ff00';
+        const color = classColors[l.class] || '#00ff00';
+        const name  = classNames[l.class]  || `Class ${l.class}`;
+
+        ctx.strokeStyle = color;
         ctx.strokeRect(x, y, w, h);
-        const txt = `Class ${l.class}`;
+        const txt = name;
         const tw  = ctx.measureText(txt).width;
-        ctx.fillStyle = '#00ff00';
+        ctx.fillStyle = color;
         ctx.fillRect(x, y-20, tw+6, 20);
-        ctx.fillStyle = '#000';
+        ctx.fillStyle = '#fff';
         ctx.fillText(txt, x+3, y-5);
+
+        // Show area percentage
+        const areaText = `${(l.w * l.h * 100).toFixed(1)}%`;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        const aw = ctx.measureText(areaText).width;
+        ctx.fillRect(x, y + h, aw + 6, 18);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(areaText, x+3, y + h + 13);
     });
 }
 
@@ -368,15 +478,70 @@ function handleImageRemoved() {
     else                              { openModal(currentIndex-1); }
 }
 
+// ── Quick Select (uses auto-detected labels directly) ──────────────────────
+async function quickSelect() {
+    if (currentIndex === -1) return;
+    const img = images[currentIndex];
+    if (!img.auto) return;
+
+    const payload = {
+        modality:   img.auto.modality,
+        resolution: img.auto.resolution,
+        obj_size:   img.auto.obj_size,
+        class:      img.auto.class,
+    };
+
+    try {
+        const r = await fetch(`/api/select/${img.path}`, {
+            method:  'POST',
+            headers: {'Content-Type': 'application/json'},
+            body:    JSON.stringify(payload),
+        });
+        const res = await r.json();
+        if (res.success) {
+            handleImageRemoved();
+            loadStats();
+        } else {
+            alert('Error: ' + res.error);
+        }
+    } catch(e) { alert('Quick select failed'); }
+}
+
 // ── Label Selector ─────────────────────────────────────────────────────────
 function openLabelSelector() {
     if (currentIndex === -1) return;
+    const img = images[currentIndex];
     pendingLabel = {};
+
     // Reset all option buttons
-    document.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('selected'));
-    document.getElementById('confirmLabelBtn').disabled = true;
+    document.querySelectorAll('.opt-btn').forEach(b => { b.classList.remove('selected', 'auto-filled'); });
+
+    // Clear hints
+    ['hintModality', 'hintResolution', 'hintObjSize', 'hintClass'].forEach(id => {
+        document.getElementById(id).textContent = '';
+    });
+
+    // Auto-fill from detected values
+    if (img.auto) {
+        autoFillOption('modality', img.auto.modality, 'hintModality');
+        autoFillOption('resolution', img.auto.resolution, 'hintResolution');
+        autoFillOption('obj_size', img.auto.obj_size, 'hintObjSize');
+        autoFillOption('class', img.auto.class, 'hintClass');
+    }
+
     updateLabelPreview();
+    checkLabelComplete();
     document.getElementById('labelModal').classList.add('active');
+}
+
+function autoFillOption(group, value, hintId) {
+    if (!value || value === 'unknown') return;
+    const btn = document.querySelector(`.opt-btn[data-group="${group}"][data-value="${value}"]`);
+    if (btn) {
+        btn.classList.add('selected', 'auto-filled');
+        pendingLabel[group] = value;
+        document.getElementById(hintId).textContent = '(auto)';
+    }
 }
 
 function closeLabelSelector() {
@@ -389,7 +554,7 @@ document.querySelectorAll('.opt-btn').forEach(btn => {
         const group = btn.dataset.group;
         // Deselect siblings
         btn.closest('.label-options').querySelectorAll('.opt-btn')
-            .forEach(b => b.classList.remove('selected'));
+            .forEach(b => b.classList.remove('selected', 'auto-filled'));
         btn.classList.add('selected');
         pendingLabel[group] = btn.dataset.value;
         updateLabelPreview();
@@ -447,6 +612,7 @@ document.addEventListener('keydown', e => {
     if (e.key === 'Escape')     closeModal();
     if (e.key === 'Delete')     deleteCurrentImage();
     if (e.key === 'Enter')      openLabelSelector();
+    if (e.key === 's' || e.key === 'S') { e.preventDefault(); quickSelect(); }
 });
 
 // ── Init & polling ─────────────────────────────────────────────────────────
